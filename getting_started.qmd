@@ -1,0 +1,590 @@
+---
+title: "Paying attention"
+format: 
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+editor_options: 
+  chunk_output_type: console
+bibliography: references.bib
+---
+
+```{r}
+#| include: false
+library(pacman)
+p_load(tidyverse, word2vec, gt, glue, DiagrammeR, dslabs)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is a walk-through of core theory underlying LLMs that assumes minimal technical knowledge or prior experience. LLMs are structurally complicated, and so this guide concentrates on the broad building blocks that might be important to an interested technical user.)
+
+# Neural nets made ridiculously simple
+
+Perhaps the most common type of structure found in LLMs are neural networks. Neural networks are structured collections of nodes. Nodes themselves are inspired by [biological neurones](https://en.wikipedia.org/wiki/Neuron), in that they:
+
+-   receive some input from an upstream neuron(s)
+-   process that input in some way
+-   generate some output(s) in response to that input, and pass it downstream
+
+Here's a simple example of a node, implemented in code, that we might find in a neural network:
+
+```{r}
+#| fig-width: 4
+#| fig-height: 1
+one_node <- c('Input', 'Output')
+
+grViz("digraph G2 {
+  graph [layout=neato overlap = true]
+
+  n2 [pos='0.5,1!' label = '@@1' shape = plaintext fontcolor=SlateGrey]
+  n1 [pos='2.5,1!' label='Node' style=radial fontcolor=SlateGrey fillcolor = mistyrose color=white]
+  n3 [pos='4.5,1!' label = '@@2' shape = plaintext fontcolor=SlateGrey]
+
+  n2 -> n1 [color = SlateGrey]
+  n1 -> n3 [color = SlateGrey]
+
+}
+
+[1]: one_node[1]
+[2]: one_node[2]
+
+")
+
+
+```
+
+A very simple example - if we think about simple numeric inputs and outputs, we can imagine a node that basically replicates some simple logical or programming function. For example, our node could produce an output of 1 when we supply an odd number, and otherwise output 0:
+
+```{r}
+#| fig-width: 4
+#| fig-height: 1
+one_node <- c("Input = 1", "Output = 1")
+grViz("digraph G2 {
+  graph [layout=neato overlap = true]
+
+  n2 [pos='0.5,1!' label = '@@1' shape = plaintext fontcolor=SlateGrey]
+  n1 [pos='2.5,1!' label='Node' style=radial fontcolor=SlateGrey fillcolor = mistyrose color=white]
+  n3 [pos='4.5,1!' label = '@@2' shape = plaintext fontcolor=SlateGrey]
+
+  n2 -> n1 [color = SlateGrey]
+  n1 -> n3 [color = SlateGrey]
+
+}
+
+[1]: one_node[1]
+[2]: one_node[2]
+
+")
+
+one_node <- c("Input = 2", "Output = 0")
+grViz("digraph G2 {
+  graph [layout=neato overlap = true]
+
+  n2 [pos='0.5,1!' label = '@@1' shape = plaintext fontcolor=SlateGrey]
+  n1 [pos='2.5,1!' label='Node' style=radial fontcolor=SlateGrey fillcolor = mistyrose color=white]
+  n3 [pos='4.5,1!' label = '@@2' shape = plaintext fontcolor=SlateGrey]
+
+  n2 -> n1 [color = SlateGrey]
+  n1 -> n3 [color = SlateGrey]
+
+}
+
+[1]: one_node[1]
+[2]: one_node[2]
+
+")
+
+```
+
+Two important things to note at this stage. First, nodes can have one or many inputs, and these inputs can be processed into one or many outputs. Second, the outputs don't need to be binary 0/1s, but can be continuous decimal numbers, so that upstream nodes can influence downstream nodes by degrees.
+
+This flexibility means that we can build networks of nodes (hence neural networks). Again, a very simple example:
+
+```{r}
+grViz("digraph G1 {
+  graph [layout=neato overlap = true]     
+  I0 [pos='0.5,3.25!' shape=plaintext label='Input layer' fontsize=20 fontcolor=SlateGrey]
+  I1 [pos='1,1!'  style=radial fillcolor = mistyrose color=white fontcolor=SlateGrey]  
+  I7 [pos='0,1!'  shape=plaintext label='Input' fontcolor=SlateGrey]
+  H0 [pos='3,3.25!' shape=plaintext label='Hidden layer' fontsize=20 fontcolor=SlateGrey]
+  H1 [pos='3,2.5!' style=radial fillcolor = azure color=white fontcolor=SlateGrey]     
+  H2 [pos='3,1!'    style=radial fillcolor = azure color=white fontcolor=SlateGrey]
+  H3 [pos='3,-0.5!' style=radial fillcolor = azure color=white fontcolor=SlateGrey]
+  O0 [pos='5.5,3.25!' shape=plaintext label='Output layer' fontsize=20 fontcolor=SlateGrey]
+  O1 [pos='5,1!'  style=radial  fillcolor = honeydew color=white fontcolor=SlateGrey]
+  O7 [pos='6,1!' shape=plaintext label='Output' fontcolor=SlateGrey]
+
+  I7 -> I1 [color = SlateGrey]
+  I1 -> H1 [color = SlateGrey]
+  I1 -> {H2 H3} [color = SlateGrey]
+  {H1 H2 H3} -> O1 [color = SlateGrey]
+  O1 -> O7 [color = SlateGrey]
+  
+}")
+```
+
+A user supplies some input. That input is fed into an input node(s), which processes the input, and produces three different outputs that are then fed into a second layer of nodes. Further processing happens in this hidden layer, leading to three outputs that are integrated together in a final output node that processes the outputs of the hidden layer into a single output.
+
+[There are lots of ways that neural networks can be arranged](https://www.asimovinstitute.org/neural-network-zoo/). These examples show the simplest architecture - the feed-forward network, where all the nodes are connected from left-to-right. More complicated architecture, such as [recurrent neural networks](https://en.wikipedia.org/wiki/Recurrent_neural_network), might include feedback within layers (so nodes in the hidden layer in the example above might connect to other nodes in the hidden layer).
+
+At the present time (mid-2023), complex neural network architectures are somewhat out of fashion in LLM-land. Instead of developing complex networks, the current state-of-the-art consists of complex arrangements of simple networks. And the most simple kinds of neural network are found all over current LLM designs. 
+
+One interesting feature of these basic neural nets, which have been around for the computer equivalent of geological time [@rosenblatt1958] is that, given enough hidden nodes, they can potentially replicate *any* transformation that we might conceivably want between input and output. That's partly because - once we understand the basic input/output relationship - we can make these networks as complicated as we like:
+
+
+```{r}
+#| fig-cap: 'A more complex feed-forward neural network'
+
+grViz("digraph G2 {
+  graph [rankdir = LR splines=false] 
+
+  
+  {node [style=radial fontcolor=SlateGrey fillcolor = mistyrose color=white]
+  I1; I2; I3; I4; I5} 
+  
+  {node [style=radial fontcolor=SlateGrey fillcolor = azure color=white];
+  H1a, H1b, H1c, H1d, H1e} 
+  
+  {node [style=radial fontcolor=SlateGrey fillcolor = azure color=white];
+  H2a, H2b, H2c, H2d, H2e} 
+  
+  {node [style=radial fontcolor=SlateGrey fillcolor = honeydew color=white];
+  O1, O2, O3, O4, O5} 
+  
+  l0 [shape=plaintext, label='Input layer' fontcolor = SlateGrey];
+  l1 [shape=plaintext, label='Hidden layer 1' fontcolor = SlateGrey];
+  l2 [shape=plaintext, label='Hidden layer 2' fontcolor = SlateGrey];
+  l3 [shape=plaintext, label='Output layer' fontcolor = SlateGrey];
+  
+  {rank=same; l0; I1}
+  {rank=same; l1; H1a}
+  {rank=same; l2; H2a}
+  {rank=same; l3; O1};
+  
+  {
+  rank=same;
+  I1->I2->I3->I4->I5 [color=white];
+  }
+  {
+  rank=same;
+  H1a->H1b->H1c->H1d->H1e [color=white];
+  }
+  {
+  rank=same;
+  H2a->H2b->H2c->H2d->H2e [color=white];
+  }
+  {
+  rank=same;
+  O1->O2->O3->O4->O5 [color=white];
+  }
+  
+  {I1, I2, I3, I4, I5} -> {H1a, H1b, H1c, H1d, H1e} [color = SlateGrey arrowsize=0.3]
+  {H1a, H1b, H1c, H1d, H1e} -> {H2a, H2b, H2c, H2d, H2e} [color = SlateGrey arrowsize=0.3]
+  {H2a, H2b, H2c, H2d, H2e} -> {O1, O2, O3, O4, O5} [color = SlateGrey arrowsize=0.3]
+}")
+```
+
+Even at this kind of small-ish scale, we can see that neural networks will allow us to do quite complex processing. More excitingly, though, we can build neural networks that learn how to perform complex tasks. That's the next topic that we'll cover.
+
+# Learning in neural networks
+
+Here's why simple neural networks are widely-used: because they can be trained. Let's start with a simple case, where we have some nice simple training data that we want to use to train a classification model. We'll use the MNIST dataset, which consists of handwritten numbers. It's pretty large (60000 training images and 10000 test images) and, importantly, it is classified - so we know the right answers for the training images:
+
+![](src/images/MnistExamplesModified.png)
+
+[MNIST examples](https://upload.wikimedia.org/wikipedia/commons/f/f7/MnistExamplesModified.png)
+
+Each image is coded as a 28*28 pixel matrix with of shades of grey encoded as 0-255, like this:
+
+```{r}
+#| warning: false
+#| message: false
+
+# downloading mnist, subsetting it to a reasonable size, saving as rds
+# saveRDS(read_mnist(), "data/mnist.rds")
+# mnist <- readRDS("data/mnist.rds")
+# mnist$test <- ""
+# mnist$train$images <- mnist$train$images[1:36,]
+# mnist$train$labels <- mnist$train$labels[1:36]
+# saveRDS(mnist, "data/mnist_sm.rds")
+
+mnist <- readRDS("data/mnist_sm.rds")
+t(matrix(mnist$train$images[1,], 28, 28)) |>
+  as_tibble() |>
+  select(V10:V15) |>
+  slice(5:10) |>
+  knitr::kable()
+```
+
+An aside here for the R enthusiasts - we can plot the handwritten numbers back out of the data using `ggplot()`:
+```{r}
+#| warning: false
+#| message: false
+#| cache: true
+
+mnist_plot <- function(n){
+
+    
+    matrix(mnist$train$images[n, ], 28, 28) |>
+      as_tibble() |>
+      mutate(rn = row_number()) |>
+      pivot_longer(!rn) |>
+      mutate(name = as.numeric(gsub("V", "", name))) |>
+      ggplot() +
+      geom_tile(aes(
+        x = rn,
+        y = reorder(name,-name),
+        fill = value
+      )) +
+      scale_fill_gradient2(mid = "white", high = "black") +
+      ggtitle(glue("Label: { mnist$train$labels[n]}")) +
+      theme_void() +
+      theme(legend.position = "none")
+
+}
+
+gridExtra::grid.arrange(grobs = map(1:36, mnist_plot), nrow = 6, top="Some MNIST examples")
+
+```
+
+Now we can train. The scheme is:
+
+a) find some data relating to the task we want to perform
+b) classify and label that data (like the digital numbers added to MNIST)
+c) translate the data into an appropriate numerical format
+d) split the data into a training set, and a test set
+e) use the training set to 'teach' the neural net what sort of classification we want to do using the labels in the data to provide feedback to our neural net.
+f) once this training is completed, we can then test the trained neural net against (surprise!) the test set to see how well it performs
+
+# Weights
+This brings us to weights. When we train a neural net, very crudely, we're trying to discover how we should weigh the different connections in the model. Say that we have a simple network with two inputs:
+
+```{r}
+#| fig-width: 4
+#| fig-height: 3
+
+
+grViz("digraph G1 {
+  graph [layout=neato overlap = true]     
+  I0 [pos='0.75,2.75!' shape=plaintext label='Input layer' fontsize=20 fontcolor=SlateGrey]
+  O0 [pos='3.75,2.75!' shape=plaintext label='Output layer' fontsize=20 fontcolor=SlateGrey]
+  
+  I1 [pos='1.5,2!'  style=radial fillcolor = mistyrose color=white fontcolor=SlateGrey]  
+  I2 [pos='1.5,1!'  style=radial fillcolor = mistyrose color=white fontcolor=SlateGrey]
+  I7 [pos='0,2!'  shape=plaintext label='Input' fontcolor=SlateGrey]
+  I8 [pos='0,1!'  shape=plaintext label='Input' fontcolor=SlateGrey]
+
+  O1 [pos='3,1.5!'  style=radial  fillcolor = honeydew color=white fontcolor=SlateGrey]
+  O7 [pos='4.5,1.5!' shape=plaintext label='Output' fontcolor=SlateGrey]
+
+  I7 -> I1 [color = SlateGrey] 
+  I8 -> I2 [color = SlateGrey]
+  I1  -> O1 [color = SlateGrey xlabel='w1' fontcolor = SlateGrey]
+  I2 -> O1 [color = SlateGrey xlabel='w2' fontcolor = SlateGrey]
+  O1 -> O7 [color = SlateGrey]
+  
+}")
+
+
+```
+
+`w1` and `w2` are the weights, and they describe how much the outputs of `I1` and `I2` will affect `O1`. Say we're training a network to classify animal. If we had set up our labels in our training data so that fish were labelled as 1 and cats as 0, and assuming that `I1` represents some fishy feature like  scales, while `I2` represents something feline like whiskers, we'd expect `w1` to be a positive weight, and `w2` to be a negative weight so that our output tends towards 1 for fish and 0 for cats.
+
+There's a lot of detail and different techniques that govern how weights are trained. But we don't need all of that yet.
+
++ start with each weight set to a small random value (weight initialisation)
++ run some values through the network, and measure the error based on the labels
++ repeatedly vary the weights, and test the model again. Again, lots of details here (properly, we're doing something called stochastic gradient descent), but approximately we vary weights in small increments, measuring the change of error, and algorithmically try to minimise the error in our system.
++ (hopefully, given enough training data) we end up with weights that reflect the training task nicely, and allow the network to perform well
+
+# Embedding
+
+The first step is to convert words to suitable numeric representations. The term of art for this is embedding. Let's take a body of text (in this case *Moby Dick*) and calculate embeddings using R's [`word2vec`](https://cran.r-project.org/web/packages/word2vec/word2vec.pdf). This generates embeddings for about 4000 common words found in that book using a (fairly simple) neural network. Let's look at a few examples to get a sense of what embeddings look like:
+
+```{r}
+#| warning: false
+#| message: false
+
+# get text
+md <- read_lines("data/2701.txt")
+md <- tolower(md[29:length(md)])
+
+# Gutenberg books use a variety of different quotation marks, so normalising these to "/' - see https://stackoverflow.com/questions/47173557/text-mining-r-package-regex-to-handle-replace-smart-curly-quotes
+sngl_quot_rx = "[ʻʼʽ٬‘’‚‛՚︐]"
+dbl_quot_rx = "[«»““”„‟≪≫《》〝〞〟\\＂″‶]"
+md = gsub(dbl_quot_rx, "\"", gsub(sngl_quot_rx, "'", `Encoding<-`(md, "UTF8"))) 
+
+# train a model and view embeddings
+model <-
+  word2vec(
+    type = "skip-gram",
+    x = md,
+    dim = 10,
+    iter = 20,
+    split = c(" \n,.-—!?:;/\"#$%&'()*+<=>@[]\\^_`{|}~\t\v\f\r", ".\n?!"),
+    hs = TRUE,
+    threads = 4L
+    )
+
+emb <- as.matrix(model)
+
+as_tibble(emb, rownames="word") |>
+  slice(1:8) |>
+  knitr::kable(caption="Some sample embeddings")
+
+
+
+```
+
+So we now have a vector of 10 numbers for each word. 10 isn't a magic number or anything, but just chosen for convenience here. As we'll see later, the size of each embedding is a critical feature in LLM performance.
+
+Each word is described by that series (we'll say vector) of numbers. So we can represent the word *`r rownames(emb)[4]`* as:
+
+```{r}
+emb[4,]
+```
+
+This vector represents complex linguistic features of that word in a fairly simple way that, most importantly, is computationally tractable. That is, we can use very standard data science tools - like matrices - to perform operations on the linguistic features of that word. Roughly, we're now doing natural language processing (NLP).
+
+## An example of processing with embeddings
+
+Say we have an input string:
+
+```{r}
+input_string <- "I have every reason to believe that the food of the sperm whale"
+split_input_string <- tolower(unlist(strsplit(input_string, " ")))
+```
+
+We can take that input string:
+
+```{r}
+cat(input_string)
+```
+
+And use it to calculate the most likely next words:
+
+```{r}
+#| message: false
+nearest <- predict(model, split_input_string, type = "nearest", top_n = 5)
+
+nn_words <- nearest |>
+  map_dfc( ~.x |> as_tibble() |> select(term2))
+
+names(nn_words) <- names(nearest)
+
+nn_words |> knitr::kable(caption = "Most likely next words")
+
+```
+
+That gives rise to all sorts of useful small-scale generation techniques. For example, we could chain some of these together to generate some semi-plausible text snippets for us:
+
+```{r}
+# make an output v
+output <- vector("character", 10)
+
+# pick a word at random from the model
+output[1] <- sample(rownames(emb), 1)
+
+# then pick randomly from near-neighbour words and repeat until the output is populated
+for(i in 2:10){
+  output[i] <- sample(predict(model, output[i-1], type = "nearest", top_n = 3)[[output[i-1]]][["term2"]], 1)
+}
+
+cat(paste(output, collapse=" "))
+```
+
+It's important to note that these next word likelihoods are not based on word positions in the training data, as they would be with a Markov chain or similar. The big idea here is that we're capturing something more important than mere position - semantic content, or the meaning of words - and using that to make our predictions.
+
+For our LLM-specific purposes, though, we're going ignore the direct uses of embeddings for now, and instead use a matrix of the embeddings of the input words as input to our model:
+
+```{r}
+emb <- predict(model, split_input_string, type = "embedding") #embeddings
+```
+
+Think here of the numbers in each row as a way of describing each word in the input. If we take the nearest neighbours of one of our input words, these values will sort-of cluster around that original term. Just to make sense of that a bit, let's visualise the vectors for our input string:
+
+```{r}
+emb |> 
+  as_tibble(rownames="word") |>
+  gt() |>
+  data_color(V1:V10, palette = "Oranges")
+```
+
+That's pretty incoherent, so let's look at some nearest neighbours for the word "whale":
+
+```{r}
+nn_whale <- predict(model, c("whale", nearest$whale$term2), type = "embedding") 
+
+nn_whale |>
+  as_tibble(rownames="word") |> 
+  gt() |>
+  data_color(V1:V10, palette = "Oranges")
+
+```
+
+This is still not very human-readable, but there are some places where we can see what's going on. So in this case:
+
+```{r}
+#| results: asis
+nn_whale_str <- (nn_whale- t(matrix(rep(nn_whale[1,],6), 10, 6))) |>
+  as_tibble(rownames="word") |>
+  slice(-1) |>
+  pivot_longer(!word) |>
+  arrange(abs(value)) |>
+  slice(1:5) |>
+  mutate(str = glue("  \n  \n+ {name} is very close for *{word}* ({round(value, 3)})"))
+
+cat(nn_whale_str$str)
+```
+
+So embeddings are numeric description of words that capture the meaning of that word. If we want to supply several words ${x_1, x_2, \cdots, x_m}$ to an LLM to generate a response, a first step is to convert those words to a matrix of ${1, 2, \cdots, n}$ embeddings. Each word will be represented by a row in the matrix, and each of the embedding values will be a column:
+
+```{=tex}
+\begin{equation}
+X_{m,n} = 
+\begin{pmatrix}
+  x_{1,1} & x_{1,2} & \cdots & x_{1,n} \\
+  x_{2,1} & x_{2,2} & \cdots & x_{2,n} \\
+  \vdots  & \vdots  & \ddots & \vdots  \\
+  x_{m,1} & x_{m,2} & \cdots & x_{m,n} 
+\end{pmatrix}
+\end{equation}
+```
+We'll be thinking about matrices a good bit, and they're one of the few bits of 'proper' maths needed to grasp LLMs, so if this is all unfamiliar/rusty I'd highly recommend the [Khan academy unit on matrices](https://www.khanacademy.org/math/algebra-home/alg-matrices) for a refresher.
+
+# Self attention
+
+Attention is a central mathematical relation for many LLMs. It is defined as follows:
+
+$$
+{\sf Attention}(Q, K, V) = {\sf Softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+$$
+
+We'll park this equation for the time being, and work through some preparatory steps. I'll also refer you to Jay Alammar's [The Illustrated Transformer](http://jalammar.github.io/illustrated-transformer/) for a more detailed guide.
+
+## What does self attention do?
+
+It allows LLMs to deal with ambiguity. Lots of words that we might want to supply to a LLM are contextual. A good example (from Jay Alammar) is the word `it`. How can a model look across some input string, and figure out what this word in this location relates to?
+
+The very short answer is *self attention*, by which method the LLM can look across an embedded string, and associate the ambiguous word with the most appropriate other words in the string.
+
+## How do we do that
+
+1.  Take a string and calculate a matrix of embeddings from training data as we did above
+2.  Then calculate three new matrices for each row in that input matrix of embeddings:
+    1.  Query(Q)
+    2.  Key(K)
+    3.  Value(V)
+
+Each of these matrixes are calculated from weight matrices calculated during training.
+
+3.  each row of the embedded input is then scored against all the words including self (hence *self-attention*). For the first row (word) this is done as follows:
+
+    1.  Multiply the first row of the query matrix by each of the rows of the keys to produce one value for each row of the key matrix
+    2.  each of these scores is then divided by square root of the dimension of the key matrix (K), which smooths the results (similar to sd??)
+    3.  This group of scores are then softmax'd to scales all the values to probabilities that sum to 1. These probabilities describe the chance of each input word appearing at each position in the input string, so that the first word should have the highest probability at position 1, the second at 2, and the mth the highest probability at m.
+    4.  then multiply these softmax scores by the value matrix to give weighted values, which are then summed to produce the output
+
+Let's work through that with some play data
+
+```{r}
+softmax <- function(par){ # softmax function from https://rpubs.com/FJRubio/softmax
+  n.par <- length(par)
+  par1 <- sort(par, decreasing = TRUE)
+  Lk <- par1[1]
+  for (k in 1:(n.par-1)) {
+    Lk <- max(par1[k+1], Lk) + log1p(exp(-abs(par1[k+1] - Lk))) 
+  }
+  val <- exp(par - Lk)
+  return(val)
+}
+
+#start with some play embeddings
+
+nn_whale[1:6, 1:3] |>
+  as_tibble(rownames = "word") |> 
+  knitr::kable(caption = "Some sample embeddings")
+```
+
+Now we'll synthesise some weight matrices. These would usually be trained, but these are just random noise - but should show how all this works:
+
+```{r}
+matrix_knit <- function(matrix, caption){
+  matrix |>
+  knitr::kable(caption = caption)
+}
+
+# imagine some weight matrixes which are made of noise
+Q <- nn_whale[1:6,1:3] %*% matrix(rnorm(18), ncol = 6, nrow = 3)
+K <- nn_whale[1:6,1:3] %*% matrix(rnorm(18), ncol = 6, nrow = 3)
+V <- nn_whale[1:6,1:3] %*% matrix(rnorm(18), ncol = 6, nrow = 3)
+
+
+matrix_knit(Q, "Query matrix")
+matrix_knit(K, "Key matrix")
+matrix_knit(V, "Value matrix")
+```
+
+We can then plug everything into the big attention formula, to give:
+
+```{r}
+
+# R translation of attention formula
+Z <- softmax(Q %*% t(K) / sqrt(nrow(K) * nrow(K))) * V
+
+matrix_knit(Z, "Self-attention output")
+```
+
+# unsorted
+
+ https://blog.acolyer.org/2016/04/21/the-amazing-power-of-word-vectors/
+-   needed embedding because explains word embedding properly https://medium.com/deeper-learning/glossary-of-deep-learning-word-embedding-f90c3cec34ca
+-   needed word embedding because explains transformers http://jalammar.github.io/illustrated-transformer/
+-   and transformers and attention are closely linked https://lilianweng.github.io/posts/2018-06-24-attention/
+-   and attention is all you need is a key paper for the LLMs primer https://willthompson.name/what-we-know-about-llms-primer
+
+```{r}
+#| eval: false
+
+# gt_dl <- function(num){
+# 
+#   sngl_quot_rx = "[ʻʼʽ٬‘’‚‛՚︐]"
+#   dbl_quot_rx = "[«»““”„‟≪≫《》〝〞〟\\＂″‶]"
+#   
+#     txt <- gutenbergr::gutenberg_download(num) |> 
+#     gutenbergr::gutenberg_strip() 
+#   
+#    
+# }
+# 
+# gt_dl(909)
+# 
+# txtx <- gutenbergr::gutenberg_download(909) |> 
+#     gutenbergr::gutenberg_strip() |> 
+#     filter(text != "") |>
+#     mutate(txt = gsub(dbl_quot_rx, "\"", gsub(sngl_quot_rx, "'"))) 
+# rm(txtx)
+
+
+
+  
+
+# Gutenberg books use a variety of different quotation marks, so normalising these to "/' - see https://stackoverflow.com/questions/47173557/text-mining-r-package-regex-to-handle-replace-smart-curly-quotes
+
+
+# train a model and view embeddings
+model <-
+  word2vec(
+    type = "skip-gram",
+    x = md,
+    dim = 10,
+    iter = 20,
+    split = c(" \n,.-—!?:;/\"#$%&'()*+<=>@[]\\^_`{|}~\t\v\f\r", ".\n?!"),
+    hs = TRUE,
+    threads = 4L
+    )
+
+emb <- as.matrix(model)
+
+# gutenbergr::gutenberg_download(909) |> gutenbergr::gutenberg_strip()
+```

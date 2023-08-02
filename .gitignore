@@ -1,0 +1,10 @@
+/*_cache
+/*_files
+data/readings/
+*.html
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+.Renviron

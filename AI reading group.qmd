@@ -1,0 +1,173 @@
+---
+title: "![](../src/images/KLN_banner_v05_125.png) AI reading group"
+author: "Brendan Clarke, NHS Education for Scotland, [brendan.clarke2@nhs.scot](mailto:brendan.clarke2@nhs.scot)"
+date: "`r Sys.Date()`"
+date-format: DD/MM/YYYY
+bibliography: references.bib
+format:
+  html:
+    embed-resources: true
+#  revealjs:
+#    width: 1600
+#    margin: 0.1
+#    logo: src/images/KLN_banner_v05_125.png
+#    css: src//images//logo.css
+editor_options: 
+  chunk_output_type: console
+---
+
+This is a reading list about AI/ML/LLM aimed at a non-academic but fairly expert data science audience. It's cobbled together from a few different sources, especially:
+
+-   [Sebastian Raschka's *Understanding Large Language Models -- A Transformative Reading List*](https://sebastianraschka.com/blog/2023/llm-reading-list.html)
+
+-   A brilliant [LinkedIn thread](https://www.linkedin.com/feed/update/urn:li:activity:7028449312300834816/?commentUrn=urn%3Ali%3Acomment%3A%28activity%3A7028449312300834816%2C7028519126105030656%29&dashCommentUrn=urn%3Ali%3Afsd_comment%3A%287028519126105030656%2Curn%3Ali%3Aactivity%3A7028449312300834816%29)
+
+All comments, corrections, and additions very welcome.
+
+```{r}
+#| echo: false
+#| warning: false
+
+knitr::opts_chunk$set(echo = F, warning = F, message = F, results = "asis", fig.width = 7, fig.height = 4)
+
+library(pacman)
+p_load(tidyverse, KINDR, viridis, wordcountaddin, DT, glue)
+p_load_gh("elizagrames/litsearchr")
+```
+
+```{r}
+# data loading
+
+keyword <- tribble(
+  ~bibtexkey, ~keyword, ~note,
+  
+"sutton1988", "History", "",
+"fu2022", "State space models", "",
+"brown2020", "Few shot", "",
+"vaswani2017", "Transformers", "Proposal/introduction of transformers",
+"bender2021", "Risks", "",
+"bahdanau2014", "History", "",
+"amatriain2023", "Transformers", "Review of transformer architectures",
+"Alammar2018", "Transformers", "Technical introduction",
+"zhou2022", "Prompt engineering", "",
+"kearns2019", "Risks", "",
+"hopfield1982", "History", "",
+"ramsauer2020", "Design", "note connection to Hopfield 1982", 
+"devlin2018", "Design", "",
+"thoppilan2022", "Design", "Google's LLM",
+"weng2023", "Transformers", "Bracingly technical review, great for quick reference + mathematics",
+"baker2021a", "Algorithmic bias", "",
+"kong2021", "Algorithmic bias", "", 
+"grote2022", "Algorithmic bias", "",
+"lang2023", "Health & care examples", "For reading during Oct 2023"
+
+)
+
+bib_keys <- read_lines("references.bib")
+bib_keys <- gsub(".*\\{", "", bib_keys[grep("^@", bib_keys)]) |> str_replace_all("[:punct:]", "")
+
+papers <- import_results(file = "references.bib", verbose=F) |>
+  bind_cols(bibtexkey = bib_keys)
+
+papers_full <- papers |> 
+  select(year, author, title, url, doi, bibtexkey) |>
+  mutate(author = word(author, 1) |> str_replace_all("[:punct:]", "")) |>
+  mutate(url = glue("<a href=\'{url}\'>url</a>")) |>
+  left_join(keyword, by="bibtexkey")
+
+
+# papers|> 
+#   select(year, author, title, url, doi, bibtexkey) |>
+#   mutate(author = word(author, 1) |> str_replace_all("[:punct:]", ""))|>
+#   mutate(url = glue("<a href=\'{url}\'>url</a>")) |>
+#   left_join(keyword, by="bibtexkey")
+
+
+paper_group <- papers_full %>% # list for the split tables
+  mutate(citation = glue("@{bibtexkey}")) %>%
+  select(citation, title, url, doi, keyword, note) %>%
+  split(f = as.factor(.$keyword))
+
+```
+
+#  {.tabset}
+
+## Schedule
+
+```{r}
+tribble(
+  ~ date,
+  ~ citation,
+  dmy("03/08/2023"), "vaswani2017",
+  dmy("17/08/2023"), "",
+  dmy("31/08/2023"), "",
+  dmy("14/09/2023"), "",
+  dmy("28/09/2023"), "",
+  dmy("12/10/2023"), "bender2021",
+  dmy("26/10/2023"), "lang2023"
+) |>
+  mutate(citation = glue("@{citation}")) |>
+  knitr::kable()
+
+
+
+
+```
+
+
+## Filterable table
+
+::: column-page
+```{r}
+# main filterable table
+
+papers_full |>
+  select(!bibtexkey) |>
+  rename(`first author` = author) |>
+  DT::datatable(escape = FALSE, 
+                filter = 'top', 
+                rownames = FALSE,
+                options = list(
+                  scrollX = TRUE,
+                  autoWidth = TRUE
+                )
+                )
+
+```
+:::
+
+## Papers by theme
+
+```{r}
+#| results: asis
+
+sub_table <- function(group){
+  
+  cat(glue("### {group}"))
+  cat("  \n")
+  cat("  \n")
+  
+  dat <- paper_group[[group]] |>
+    select(!keyword)
+  
+  print(knitr::kable(dat, row.names = FALSE))
+    cat("  \n")
+  cat("  \n")
+                     
+}
+
+walk(names(paper_group), ~ sub_table(.x))
+
+```
+
+<!-- Word count: `r wordcountaddin::word_count("AI reading group.qmd")` words -->
+
+## Glossary
+
+(not started yet)
+
+-   parameters
+
+-   Backpropagation
+
+-   cloze tasks - referring to completion tasks i.e. fill in blank sections of text/images
